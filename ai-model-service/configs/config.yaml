@@ -1,0 +1,15 @@
+server:
+  http_port: 8085
+  grpc_port: 9085
+  service_name: ai-model-service
+
+database:
+  driver: postgres
+  source: host=postgres user=ba_agent password=secret dbname=ba_agent_db port=5432 sslmode=disable
+
+tracer:
+  url: http://jaeger:4318
+
+vault:
+  address: http://vault:8200
+  token: root

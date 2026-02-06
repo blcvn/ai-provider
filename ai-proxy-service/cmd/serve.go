@@ -12,9 +12,11 @@ import (
 
 	"github.com/blcvn/backend/services/ai-proxy-service/controllers"
 	"github.com/blcvn/backend/services/ai-proxy-service/helper"
+	"github.com/blcvn/backend/services/ai-proxy-service/providers/anthropic"
 	"github.com/blcvn/backend/services/ai-proxy-service/usecases"
 	pb "github.com/blcvn/kratos-proto/go/ai-proxy"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -26,7 +28,16 @@ var serveCmd = &cobra.Command{
 	Run:   runServe,
 }
 
+func init() {
+	serveCmd.Flags().String("service-name", "ai-proxy-service", "Service name")
+	serveCmd.Flags().String("jaeger-url", "localhost:4317", "Jaeger URL")
+	serveCmd.Flags().String("metrics-path", "/metrics", "Metrics path")
+	serveCmd.Flags().String("grpc-port", "9087", "gRPC port")
+	serveCmd.Flags().String("http-port", "8087", "HTTP port")
+}
+
 func runServe(cmd *cobra.Command, args []string) {
+
 	modelSvcAddr := getEnv("AI_MODEL_SERVICE_ADDR", "localhost:9085")
 	grpcPort := getEnv("GRPC_PORT", "9087")
 	httpPort := getEnv("HTTP_PORT", "8087")
@@ -36,17 +47,31 @@ func runServe(cmd *cobra.Command, args []string) {
 		log.Fatalf("Failed to connect to AI Model Service: %v", err)
 	}
 
-	usecase := usecases.NewAIProxyUsecase(modelClient)
+	usecase := usecases.NewProxyUsecase(modelClient)
 
-	// Register Default OpenAI Provider (or load from config)
-	// In production, we'd load these from a DB or Config
-	// For now, usecase dynamically gets creds and should probably
-	// have a factory for providers based on creds.Provider
+	// Register Providers
+	// Note: API Key and Model ID are dynamic per request, but the factory needs initial dummy or changing the provider signature.
+	// However, current implementation of providers (NewClaudeProvider) takes args.
+	// But in `Complete` method of providers, we re-initialize client with request's API Key!
+	// So passing empty strings here is fine for the "base" provider structure/factory logic if it existed,
+	// BUT `usecases.RegisterProvider` expects an instance.
+	// For now, we register instances with dummy data, assuming `Complete` overrides them.
 
-	// Wrap usecase with a logic to create providers on the fly or keep a map
-	// I'll update the usecase to take a ProviderFactory
+	anthropicProvider, err := anthropic.NewClaudeProvider()
+	if err != nil {
+		log.Printf("Warning: Failed to init Anthropic provider template: %v", err)
+	} else {
+		usecase.RegisterProvider("anthropic", anthropicProvider)
+	}
 
-	controller := controllers.NewAIProxyController(usecase)
+	// openaiProvider, err := openai.NewGPTProvider("dummy-key", "dummy-model")
+	// if err != nil {
+	// 	log.Printf("Warning: Failed to init OpenAI provider template: %v", err)
+	// } else {
+	// 	usecase.RegisterProvider("openai", openaiProvider)
+	// }
+
+	controller := controllers.NewProxyController(usecase)
 
 	grpcServer := grpc.NewServer()
 	pb.RegisterAIProxyServiceServer(grpcServer, controller)
@@ -64,13 +89,17 @@ func runServe(cmd *cobra.Command, args []string) {
 	}()
 
 	ctx := context.Background()
-	mux := runtime.NewServeMux()
+	gwMux := runtime.NewServeMux()
 	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 
-	err = pb.RegisterAIProxyServiceHandlerFromEndpoint(ctx, mux, fmt.Sprintf("localhost:%s", grpcPort), opts)
+	err = pb.RegisterAIProxyServiceHandlerFromEndpoint(ctx, gwMux, fmt.Sprintf("localhost:%s", grpcPort), opts)
 	if err != nil {
 		log.Fatalf("Failed to register gateway: %v", err)
 	}
+
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+	mux.Handle("/", gwMux)
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%s", httpPort),

@@ -11,49 +11,62 @@ import (
 
 type iAIModelClient interface {
 	GetCredentials(ctx context.Context, modelID string) (*model_pb.Credentials, error)
+	GetModel(ctx context.Context, modelID string) (*model_pb.AIModel, error)
 	CheckQuota(ctx context.Context, modelID string, tokens int32) (bool, error)
 	LogUsage(ctx context.Context, modelID string, promptTokens, completionTokens int32) error
 }
 
-type aiProxyUsecase struct {
+// ProxyUsecase implements the core business logic for AI Proxy
+type ProxyUsecase struct {
 	modelClient iAIModelClient
 	providers   map[string]entities.LLMProvider
 }
 
-func NewAIProxyUsecase(modelClient iAIModelClient) *aiProxyUsecase {
-	return &aiProxyUsecase{
+func NewProxyUsecase(modelClient iAIModelClient) *ProxyUsecase {
+	return &ProxyUsecase{
 		modelClient: modelClient,
 		providers:   make(map[string]entities.LLMProvider),
 	}
 }
 
-func (u *aiProxyUsecase) RegisterProvider(name string, provider entities.LLMProvider) {
+func (u *ProxyUsecase) RegisterProvider(name string, provider entities.LLMProvider) {
 	u.providers[name] = provider
 }
 
-func (u *aiProxyUsecase) Complete(ctx context.Context, req *entities.CompletionRequest) (*entities.CompletionResponse, errors.BaseError) {
+func (u *ProxyUsecase) Complete(ctx context.Context, req *entities.CompletionRequest) (*entities.CompletionResponse, errors.BaseError) {
 	// 1. Check Quota
-	allowed, err := u.modelClient.CheckQuota(ctx, req.ModelID, req.MaxTokens)
+	// tạm thời bỏ logic check quota
+	// allowed, err := u.modelClient.CheckQuota(ctx, req.ModelID, req.MaxTokens)
+	// if err != nil {
+	// 	return nil, errors.Internal(err)
+	// }
+	// if !allowed {
+	// 	return nil, errors.RateLimit("quota exceeded for this model")
+	// }
+
+	// 2. Get Model Info (to know provider)
+	model, err := u.modelClient.GetModel(ctx, req.ModelID)
 	if err != nil {
 		return nil, errors.Internal(err)
 	}
-	if !allowed {
-		return nil, errors.RateLimit("quota exceeded for this model")
-	}
 
-	// 2. Get Credentials
+	// 3. Get Credentials
 	creds, err := u.modelClient.GetCredentials(ctx, req.ModelID)
 	if err != nil {
 		return nil, errors.Internal(err)
 	}
 
-	// 3. Get Provider
-	provider, ok := u.providers[creds.Provider]
+	// Inject credentials into request
+	req.APIKey = creds.ApiKey
+	req.BaseURL = creds.BaseUrl
+
+	// 4. Get Provider
+	provider, ok := u.providers[model.Provider]
 	if !ok {
-		return nil, errors.BadRequest(fmt.Sprintf("unsupported provider: %s", creds.Provider))
+		return nil, errors.BadRequest(fmt.Sprintf("unsupported provider: %s", model.Provider))
 	}
 
-	// 4. Call LLM
+	// 5. Call LLM
 	// TODO: Inject creds into provider before calling, or pass creds to Complete
 	resp, err := provider.Complete(ctx, req)
 	if err != nil {
@@ -66,26 +79,43 @@ func (u *aiProxyUsecase) Complete(ctx context.Context, req *entities.CompletionR
 	return resp, nil
 }
 
-func (u *aiProxyUsecase) StreamComplete(ctx context.Context, req *entities.CompletionRequest, callback func(*entities.StreamResponse) error) errors.BaseError {
+func (u *ProxyUsecase) HealthCheck(ctx context.Context) (bool, error) {
+	// Simple health check: verify DB/Redis connectivity if possible.
+	// For now, return true as basic check.
+	// TODO: Add proper health checks
+	return true, nil
+}
+
+func (u *ProxyUsecase) StreamComplete(ctx context.Context, req *entities.CompletionRequest, callback func(*entities.StreamResponse) error) errors.BaseError {
 	// 1. Check Quota
-	allowed, err := u.modelClient.CheckQuota(ctx, req.ModelID, req.MaxTokens)
+	// allowed, err := u.modelClient.CheckQuota(ctx, req.ModelID, req.MaxTokens)
+	// if err != nil {
+	// 	return errors.Internal(err)
+	// }
+	// if !allowed {
+	// 	return errors.RateLimit("quota exceeded for this model")
+	// }
+
+	// 2. Get Model Info
+	model, err := u.modelClient.GetModel(ctx, req.ModelID)
 	if err != nil {
 		return errors.Internal(err)
 	}
-	if !allowed {
-		return errors.RateLimit("quota exceeded for this model")
-	}
 
-	// 2. Get Credentials
+	// 3. Get Credentials
 	creds, err := u.modelClient.GetCredentials(ctx, req.ModelID)
 	if err != nil {
 		return errors.Internal(err)
 	}
 
-	// 3. Get Provider
-	provider, ok := u.providers[creds.Provider]
+	// Inject credentials into request
+	req.APIKey = creds.ApiKey
+	req.BaseURL = creds.BaseUrl
+
+	// 4. Get Provider
+	provider, ok := u.providers[model.Provider]
 	if !ok {
-		return errors.BadRequest(fmt.Sprintf("unsupported provider: %s", creds.Provider))
+		return errors.BadRequest(fmt.Sprintf("unsupported provider: %s", model.Provider))
 	}
 
 	// 4. Stream LLM

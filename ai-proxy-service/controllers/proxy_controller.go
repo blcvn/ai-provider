@@ -3,7 +3,7 @@ package controllers
 import (
 	"context"
 
-	"github.com/blcvn/backend/services/ai-proxy-service/providers"
+	"github.com/blcvn/backend/services/ai-proxy-service/entities"
 	"github.com/blcvn/backend/services/ai-proxy-service/usecases"
 	aiproxy "github.com/blcvn/kratos-proto/go/ai-proxy"
 )
@@ -32,17 +32,20 @@ func (c *ProxyController) Complete(ctx context.Context, req *aiproxy.CompleteReq
 		}, nil
 	}
 
-	// Convert proto request to provider request
-	providerReq := &providers.CompletionRequest{
-		Prompt:        req.Payload.Prompt,
-		Temperature:   req.Payload.Temperature,
-		MaxTokens:     int(req.Payload.MaxTokens),
-		TopP:          req.Payload.TopP,
+	// Convert proto request to entity request
+	entityReq := &entities.CompletionRequest{
+		ModelID: req.Payload.ModelId,
+		Messages: []entities.Message{
+			{Role: entities.RoleUser, Content: req.Payload.Prompt}, // TODO: Support chat messages from proto if available or needed
+		},
+		Temperature:   float32(req.Payload.Temperature),
+		MaxTokens:     int32(req.Payload.MaxTokens),
 		StopSequences: req.Payload.Stop,
 	}
 
 	// Execute completion
-	response, fromCache, err := c.usecase.Complete(ctx, req.Payload.ModelId, providerReq)
+	response, err := c.usecase.Complete(ctx, entityReq)
+	fromCache := false // Caching temporarily removed in new usecase logic
 	if err != nil {
 		return &aiproxy.CompleteResponse{
 			Result: &aiproxy.Result{
@@ -59,13 +62,15 @@ func (c *ProxyController) Complete(ctx context.Context, req *aiproxy.CompleteReq
 			Message: "Success",
 		},
 		Completion: &aiproxy.CompletionResponse{
-			Id:         "", // TODO: generate ID
-			ModelId:    req.Payload.ModelId,
-			Text:       response.Content,
-			TokensUsed: int64(response.TokensUsed),
-			LatencyMs:  0, // TODO: track latency
-			FromCache:  fromCache,
-			Provider:   "", // TODO: track provider
+			Id:               "", // TODO: generate ID
+			ModelId:          req.Payload.ModelId,
+			Text:             response.Content,
+			TotalTokens:      int32(response.Usage.TotalTokens),
+			PromptTokens:     int32(response.Usage.PromptTokens),
+			CompletionTokens: int32(response.Usage.CompletionTokens),
+			LatencyMs:        0, // TODO: track latency
+			FromCache:        fromCache,
+			Provider:         "", // TODO: track provider
 		},
 	}, nil
 }

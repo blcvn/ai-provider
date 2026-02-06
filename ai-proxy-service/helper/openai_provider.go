@@ -28,7 +28,7 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *entities.CompletionR
 		return nil, err
 	}
 
-	content, err := llm.Call(ctx, u2l_messages(req.Messages),
+	resp, err := llm.GenerateContent(ctx, u2l_messages(req.Messages),
 		llms.WithModel(req.ModelID),
 		llms.WithTemperature(float64(req.Temperature)),
 		llms.WithMaxTokens(int(req.MaxTokens)),
@@ -37,12 +37,16 @@ func (p *OpenAIProvider) Complete(ctx context.Context, req *entities.CompletionR
 		return nil, err
 	}
 
-	// LangChainGo doesn't always return usage in the simple Call method for all providers
-	// For production, we'd use GenerateContent and inspect the result
+	content := ""
+	if len(resp.Choices) > 0 {
+		content = resp.Choices[0].Content
+	}
+
+	// LangChainGo returns usage in GenerateContent response
 	return &entities.CompletionResponse{
 		Content: content,
 		Usage: entities.Usage{
-			PromptTokens:     0, // Placeholder
+			PromptTokens:     0, // TODO: Extract from resp.Usage if available? only available in some providers
 			CompletionTokens: 0,
 			TotalTokens:      0,
 		},
@@ -60,7 +64,7 @@ func (p *OpenAIProvider) StreamComplete(ctx context.Context, req *entities.Compl
 		return err
 	}
 
-	_, err = llm.Call(ctx, u2l_messages(req.Messages),
+	_, err = llm.GenerateContent(ctx, u2l_messages(req.Messages),
 		llms.WithModel(req.ModelID),
 		llms.WithTemperature(float64(req.Temperature)),
 		llms.WithMaxTokens(int(req.MaxTokens)),

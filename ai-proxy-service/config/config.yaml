@@ -1,0 +1,18 @@
+server:
+  http_port: 8086
+  grpc_port: 9086
+  service_name: ai-proxy-service
+
+database:
+  driver: postgres
+  source: host=postgres user=ba_agent password=secret dbname=ba_agent_db port=5432 sslmode=disable
+
+tracer:
+  url: http://jaeger:4318
+
+vault:
+  address: http://vault:8200
+  token: root
+
+model_service:
+  grpc_address: ai-model-service:9090

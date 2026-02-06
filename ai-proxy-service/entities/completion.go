@@ -24,6 +24,9 @@ type CompletionRequest struct {
 	Temperature   float32
 	MaxTokens     int32
 	StopSequences []string
+	// Credentials injected by usecase
+	APIKey  string
+	BaseURL string
 }
 
 type CompletionResponse struct {

@@ -65,7 +65,8 @@ func (r *modelRepository) CreateModel(ctx context.Context, payload *entities.Cre
 func (r *modelRepository) GetModel(ctx context.Context, id string) (*entities.AIModel, errors.BaseError) {
 	modelUUID, err := uuid.Parse(id)
 	if err != nil {
-		return nil, errors.BadRequest(constants.ErrInvalidModelID)
+		// If not a UUID, try to find by name
+		return r.GetModelByName(ctx, id)
 	}
 
 	var dtoModel dto.AIModel

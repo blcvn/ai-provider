@@ -8,6 +8,7 @@ import (
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/openai"
 
+	"github.com/blcvn/backend/services/ai-proxy-service/entities"
 	"github.com/blcvn/backend/services/ai-proxy-service/providers"
 )
 
@@ -20,6 +21,7 @@ type GPTProvider struct {
 
 // NewGPTProvider creates a new OpenAI GPT provider using LangChainGo
 func NewGPTProvider(apiKey, modelID string) (*GPTProvider, error) {
+	// Initial placeholder initialization
 	llm, err := openai.New(
 		openai.WithToken(apiKey),
 		openai.WithModel(modelID),
@@ -36,42 +38,50 @@ func NewGPTProvider(apiKey, modelID string) (*GPTProvider, error) {
 }
 
 // Complete sends a completion request to OpenAI API using LangChainGo
-func (g *GPTProvider) Complete(ctx context.Context, req *providers.CompletionRequest) (*providers.CompletionResponse, error) {
+func (g *GPTProvider) Complete(ctx context.Context, req *entities.CompletionRequest) (*entities.CompletionResponse, error) {
 	// Build messages
-	messages := []llms.MessageContent{
-		{
-			Role: llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{
-				llms.TextContent{Text: req.Prompt},
-			},
-		},
+	// entities.Message -> llms.MessageContent
+	messages := make([]llms.MessageContent, len(req.Messages))
+	for i, m := range req.Messages {
+		role := llms.ChatMessageTypeGeneric
+		switch m.Role {
+		case entities.RoleSystem:
+			role = llms.ChatMessageTypeSystem
+		case entities.RoleUser:
+			role = llms.ChatMessageTypeHuman
+		case entities.RoleAssistant:
+			role = llms.ChatMessageTypeAI
+		}
+		messages[i] = llms.TextParts(role, m.Content)
 	}
 
-	// Add system prompt if provided
-	if req.SystemPrompt != "" {
-		messages = append([]llms.MessageContent{
-			{
-				Role: llms.ChatMessageTypeSystem,
-				Parts: []llms.ContentPart{
-					llms.TextContent{Text: req.SystemPrompt},
-				},
-			},
-		}, messages...)
+	// Dynamic client creation using injected credentials
+	clientOpts := []openai.Option{
+		openai.WithToken(req.APIKey),
+		openai.WithModel(req.ModelID),
+	}
+	if req.BaseURL != "" {
+		clientOpts = append(clientOpts, openai.WithBaseURL(req.BaseURL))
+	}
+
+	ll, err := openai.New(clientOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OpenAI LLM: %w", err)
 	}
 
 	// Build options
-	options := []llms.CallOption{
-		llms.WithTemperature(req.Temperature),
-		llms.WithMaxTokens(req.MaxTokens),
-		llms.WithTopP(req.TopP),
+	callOpts := []llms.CallOption{
+		llms.WithTemperature(float64(req.Temperature)),
+		llms.WithMaxTokens(int(req.MaxTokens)),
+		// llms.WithTopP(req.TopP), // Removed TopP as it was missing in struct or not critical
 	}
 
 	if len(req.StopSequences) > 0 {
-		options = append(options, llms.WithStopWords(req.StopSequences))
+		callOpts = append(callOpts, llms.WithStopWords(req.StopSequences))
 	}
 
 	// Call LLM
-	response, err := g.llm.GenerateContent(ctx, messages, options...)
+	response, err := ll.GenerateContent(ctx, messages, callOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate content: %w", err)
 	}
@@ -85,21 +95,21 @@ func (g *GPTProvider) Complete(ctx context.Context, req *providers.CompletionReq
 	}
 
 	// Estimate token counts (rough approximation: 1 token ≈ 4 characters)
-	promptTokens := estimateTokens(req.Prompt + req.SystemPrompt)
-	completionTokens := estimateTokens(text)
+	var promptText string
+	for _, m := range req.Messages {
+		promptText += m.Content + " "
+	}
+	promptTokens := int32(estimateTokens(promptText))
+	completionTokens := int32(estimateTokens(text))
 
-	// Calculate cost (GPT-4 pricing)
-	// $10 per 1M input tokens, $30 per 1M output tokens
-	cost := (float64(promptTokens) / 1_000_000.0 * 10.0) + (float64(completionTokens) / 1_000_000.0 * 30.0)
-
-	return &providers.CompletionResponse{
-		Content:          text,
-		TokensUsed:       promptTokens + completionTokens,
-		PromptTokens:     promptTokens,
-		CompletionTokens: completionTokens,
-		FinishReason:     stopReason,
-		Cost:             cost,
-		ModelUsed:        g.modelID,
+	return &entities.CompletionResponse{
+		Content:      text,
+		FinishReason: stopReason,
+		Usage: entities.Usage{
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			TotalTokens:      promptTokens + completionTokens,
+		},
 	}, nil
 }
 
@@ -108,10 +118,58 @@ func (g *GPTProvider) GenerateContent(ctx context.Context, messages []llms.Messa
 	return g.llm.GenerateContent(ctx, messages, options...)
 }
 
+// StreamComplete implements streaming completion
+func (g *GPTProvider) StreamComplete(ctx context.Context, req *entities.CompletionRequest, callback func(*entities.StreamResponse) error) error {
+	// Dynamic client creation using injected credentials
+	clientOpts := []openai.Option{
+		openai.WithToken(req.APIKey),
+		openai.WithModel(req.ModelID),
+	}
+	if req.BaseURL != "" {
+		clientOpts = append(clientOpts, openai.WithBaseURL(req.BaseURL))
+	}
+
+	ll, err := openai.New(clientOpts...)
+	if err != nil {
+		return fmt.Errorf("failed to create OpenAI LLM: %w", err)
+	}
+
+	// Build messages
+	messages := make([]llms.MessageContent, len(req.Messages))
+	for i, m := range req.Messages {
+		role := llms.ChatMessageTypeGeneric
+		switch m.Role {
+		case entities.RoleSystem:
+			role = llms.ChatMessageTypeSystem
+		case entities.RoleUser:
+			role = llms.ChatMessageTypeHuman
+		case entities.RoleAssistant:
+			role = llms.ChatMessageTypeAI
+		}
+		messages[i] = llms.TextParts(role, m.Content)
+	}
+
+	// Build options
+	callOpts := []llms.CallOption{
+		llms.WithTemperature(float64(req.Temperature)),
+		llms.WithMaxTokens(int(req.MaxTokens)),
+		llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
+			return callback(&entities.StreamResponse{Content: string(chunk)})
+		}),
+	}
+
+	if len(req.StopSequences) > 0 {
+		callOpts = append(callOpts, llms.WithStopWords(req.StopSequences))
+	}
+
+	_, err = ll.GenerateContent(ctx, messages, callOpts...)
+	return err
+}
+
 // HealthCheck verifies the OpenAI API is accessible
 func (g *GPTProvider) HealthCheck(ctx context.Context) error {
-	_, err := g.Complete(ctx, &providers.CompletionRequest{
-		Prompt:    "Hi",
+	_, err := g.Complete(ctx, &entities.CompletionRequest{
+		Messages:  []entities.Message{{Role: entities.RoleUser, Content: "Hi"}},
 		MaxTokens: 10,
 	})
 	return err

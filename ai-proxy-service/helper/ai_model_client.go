@@ -34,19 +34,41 @@ func (c *AIModelClient) GetCredentials(ctx context.Context, modelID string) (*mo
 	return resp.Credentials, nil
 }
 
+func (c *AIModelClient) GetModel(ctx context.Context, modelID string) (*model_pb.AIModel, error) {
+	resp, err := c.client.GetModel(ctx, &model_pb.GetModelRequest{Id: modelID})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Result.Code != model_pb.ResultCode_SUCCESS {
+		return nil, fmt.Errorf("failed to get model: %s", resp.Result.Message)
+	}
+	return resp.Model, nil
+}
+
 func (c *AIModelClient) CheckQuota(ctx context.Context, modelID string, tokens int32) (bool, error) {
-	resp, err := c.client.CheckQuota(ctx, &model_pb.CheckQuotaRequest{ModelId: modelID, EstimatedTokens: tokens})
+	// Note: CheckQuotaRequest in proto currently only supports model_id.
+	// Tokens check might need proto update or logic change.
+	// For now, we only check if model has quota status available.
+	resp, err := c.client.CheckQuota(ctx, &model_pb.CheckQuotaRequest{ModelId: modelID})
 	if err != nil {
 		return false, err
 	}
-	return resp.IsAllowed, nil
+	// CheckQuotaResponse has QuotaStatus which has boolean Exceeded? No, it has QuotaStatus.
+	// But resp.Result can be checked too.
+	// Helper should probably return QuotaStatus or bool based on logic.
+	// Assuming QuotaStatus has Exceeded field as per base.proto
+	if resp.Quota != nil {
+		return !resp.Quota.Exceeded, nil
+	}
+	return true, nil
 }
 
 func (c *AIModelClient) LogUsage(ctx context.Context, modelID string, promptTokens, completionTokens int32) error {
 	_, err := c.client.LogUsage(ctx, &model_pb.LogUsageRequest{
-		ModelId:          modelID,
-		PromptTokens:     promptTokens,
-		CompletionTokens: completionTokens,
+		Payload: &model_pb.LogUsagePayload{
+			ModelId:    modelID,
+			TokensUsed: int64(promptTokens + completionTokens),
+		},
 	})
 	return err
 }

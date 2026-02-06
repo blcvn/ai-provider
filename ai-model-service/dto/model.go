@@ -10,7 +10,7 @@ import (
 
 // AIModel represents the database model for AI models
 type AIModel struct {
-	ID              uuid.UUID       `gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	ID              uuid.UUID       `gorm:"type:uuid;primary_key;default:uuid_generate_v4()"`
 	Name            string          `gorm:"type:varchar(255);uniqueIndex;not null"`
 	Provider        string          `gorm:"type:varchar(100);not null;index"`
 	ModelID         string          `gorm:"type:varchar(255);not null"`
@@ -38,7 +38,7 @@ func (m *AIModel) BeforeUpdate(tx *gorm.DB) error {
 
 // UsageLog represents the database model for usage logs
 type UsageLog struct {
-	ID           uuid.UUID       `gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	ID           uuid.UUID       `gorm:"type:uuid;primary_key;default:uuid_generate_v4()"`
 	ModelID      uuid.UUID       `gorm:"type:uuid;not null;index:idx_usage_model_created"`
 	UserID       *uuid.UUID      `gorm:"type:uuid;index:idx_usage_user_created"`
 	SessionID    *uuid.UUID      `gorm:"type:uuid"`

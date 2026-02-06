@@ -2,77 +2,76 @@ package anthropic
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
+	"github.com/blcvn/backend/services/ai-proxy-service/entities"
+	"github.com/blcvn/backend/services/ai-proxy-service/providers"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/anthropic"
-
-	"github.com/blcvn/backend/services/ai-proxy-service/providers"
 )
 
 // ClaudeProvider implements the LLMProvider interface for Anthropic Claude using LangChainGo
 type ClaudeProvider struct {
-	llm     llms.Model
-	apiKey  string
-	modelID string
 }
 
 // NewClaudeProvider creates a new Anthropic Claude provider using LangChainGo
-func NewClaudeProvider(apiKey, modelID string) (*ClaudeProvider, error) {
-	llm, err := anthropic.New(
-		anthropic.WithToken(apiKey),
-		anthropic.WithModel(modelID),
-	)
+func NewClaudeProvider() (*ClaudeProvider, error) {
+	return &ClaudeProvider{}, nil
+}
+
+// Complete sends a completion request to Claude API using LangChainGo
+func (c *ClaudeProvider) Complete(ctx context.Context, req *entities.CompletionRequest) (*entities.CompletionResponse, error) {
+	// Debug Log
+	reqJSON, _ := json.Marshal(req)
+	log.Printf("Anthropic Complete Request: %s", string(reqJSON))
+
+	// Build messages
+	// entities.Message -> llms.MessageContent
+	messages := make([]llms.MessageContent, len(req.Messages))
+	for i, m := range req.Messages {
+		role := llms.ChatMessageTypeGeneric
+		switch m.Role {
+		case entities.RoleSystem:
+			role = llms.ChatMessageTypeSystem
+		case entities.RoleUser:
+			role = llms.ChatMessageTypeHuman
+		case entities.RoleAssistant:
+			role = llms.ChatMessageTypeAI
+		}
+		messages[i] = llms.TextParts(role, m.Content)
+	}
+
+	// Dynamic client creation using injected credentials
+	opts := []anthropic.Option{
+		anthropic.WithToken(req.APIKey),
+		anthropic.WithModel(req.ModelID),
+	}
+	if req.BaseURL != "" {
+		opts = append(opts, anthropic.WithBaseURL(req.BaseURL))
+	}
+
+	ll, err := anthropic.New(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Anthropic LLM: %w", err)
 	}
 
-	return &ClaudeProvider{
-		llm:     llm,
-		apiKey:  apiKey,
-		modelID: modelID,
-	}, nil
-}
-
-// Complete sends a completion request to Claude API using LangChainGo
-func (c *ClaudeProvider) Complete(ctx context.Context, req *providers.CompletionRequest) (*providers.CompletionResponse, error) {
-	// Build messages
-	messages := []llms.MessageContent{
-		{
-			Role: llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{
-				llms.TextContent{Text: req.Prompt},
-			},
-		},
-	}
-
-	// Add system prompt if provided
-	if req.SystemPrompt != "" {
-		messages = append([]llms.MessageContent{
-			{
-				Role: llms.ChatMessageTypeSystem,
-				Parts: []llms.ContentPart{
-					llms.TextContent{Text: req.SystemPrompt},
-				},
-			},
-		}, messages...)
-	}
-
 	// Build options
-	options := []llms.CallOption{
-		llms.WithTemperature(req.Temperature),
-		llms.WithMaxTokens(req.MaxTokens),
-		llms.WithTopP(req.TopP),
+	callOpts := []llms.CallOption{
+		llms.WithTemperature(float64(req.Temperature)),
+		llms.WithMaxTokens(16384),
 	}
 
 	if len(req.StopSequences) > 0 {
-		options = append(options, llms.WithStopWords(req.StopSequences))
+		callOpts = append(callOpts, llms.WithStopWords(req.StopSequences))
 	}
 
 	// Call LLM
-	response, err := c.llm.GenerateContent(ctx, messages, options...)
+	response, err := ll.GenerateContent(ctx, messages, callOpts...)
 	if err != nil {
+		log.Printf("Anthropic GenerateContent Error: %v", err)
 		return nil, fmt.Errorf("failed to generate content: %w", err)
 	}
 
@@ -85,33 +84,84 @@ func (c *ClaudeProvider) Complete(ctx context.Context, req *providers.Completion
 	}
 
 	// Estimate token counts (rough approximation: 1 token ≈ 4 characters)
-	promptTokens := estimateTokens(req.Prompt + req.SystemPrompt)
-	completionTokens := estimateTokens(text)
+	var promptText string
+	for _, m := range req.Messages {
+		promptText += m.Content + " "
+	}
+	promptTokens := int32(estimateTokens(promptText))
+	completionTokens := int32(estimateTokens(text))
 
-	// Calculate cost (Claude 3.5 Sonnet pricing)
-	// $3 per 1M input tokens, $15 per 1M output tokens
-	cost := (float64(promptTokens) / 1_000_000.0 * 3.0) + (float64(completionTokens) / 1_000_000.0 * 15.0)
-
-	return &providers.CompletionResponse{
-		Content:          text,
-		TokensUsed:       promptTokens + completionTokens,
-		PromptTokens:     promptTokens,
-		CompletionTokens: completionTokens,
-		FinishReason:     stopReason,
-		Cost:             cost,
-		ModelUsed:        c.modelID,
+	return &entities.CompletionResponse{
+		Content:      text,
+		FinishReason: stopReason,
+		Usage: entities.Usage{
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			TotalTokens:      promptTokens + completionTokens,
+		},
 	}, nil
 }
 
-// GenerateContent uses LangChainGo's standardized interface directly
-func (c *ClaudeProvider) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
-	return c.llm.GenerateContent(ctx, messages, options...)
+// StreamComplete implements streaming completion
+func (c *ClaudeProvider) StreamComplete(ctx context.Context, req *entities.CompletionRequest, callback func(*entities.StreamResponse) error) error {
+	// Build messages
+	messages := make([]llms.MessageContent, len(req.Messages))
+	for i, m := range req.Messages {
+		role := llms.ChatMessageTypeGeneric
+		switch m.Role {
+		case entities.RoleSystem:
+			role = llms.ChatMessageTypeSystem
+		case entities.RoleUser:
+			role = llms.ChatMessageTypeHuman
+		case entities.RoleAssistant:
+			role = llms.ChatMessageTypeAI
+		}
+		messages[i] = llms.TextParts(role, m.Content)
+	}
+
+	// Dynamic client creation using injected credentials
+	opts := []anthropic.Option{
+		anthropic.WithToken(req.APIKey),
+		anthropic.WithModel(req.ModelID),
+	}
+	if req.BaseURL != "" {
+		opts = append(opts, anthropic.WithBaseURL(req.BaseURL))
+	}
+
+	ll, err := anthropic.New(opts...)
+	if err != nil {
+		return fmt.Errorf("failed to create Anthropic LLM: %w", err)
+	}
+
+	// Build options
+	callOpts := []llms.CallOption{
+		llms.WithTemperature(float64(req.Temperature)),
+		llms.WithMaxTokens(int(req.MaxTokens)),
+		llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
+			return callback(&entities.StreamResponse{Content: string(chunk)})
+		}),
+	}
+
+	if len(req.StopSequences) > 0 {
+		callOpts = append(callOpts, llms.WithStopWords(req.StopSequences))
+	}
+
+	// Call LLM
+	_, err = ll.GenerateContent(ctx, messages, callOpts...)
+	return err
 }
+
+// // GenerateContent uses LangChainGo's standardized interface directly
+// func (c *ClaudeProvider) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+// 	return c.llm.GenerateContent(ctx, messages, options...)
+// }
 
 // HealthCheck verifies the Claude API is accessible
 func (c *ClaudeProvider) HealthCheck(ctx context.Context) error {
-	_, err := c.Complete(ctx, &providers.CompletionRequest{
-		Prompt:    "Hi",
+	_, err := c.Complete(ctx, &entities.CompletionRequest{
+		Messages: []entities.Message{
+			{Role: entities.RoleUser, Content: "Hi"},
+		},
 		MaxTokens: 10,
 	})
 	return err

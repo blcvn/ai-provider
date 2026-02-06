@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/blcvn/backend/services/ai-model-service/controllers"
+	"github.com/blcvn/backend/services/ai-model-service/dto"
 	"github.com/blcvn/backend/services/ai-model-service/helper"
 	"github.com/blcvn/backend/services/ai-model-service/repository/postgres"
 	"github.com/blcvn/backend/services/ai-model-service/usecases"
@@ -68,9 +69,18 @@ func runServe(cmd *cobra.Command, args []string) {
 	vaultToken := getEnv("VAULT_TOKEN", "")
 
 	// Initialize database
-	db, err := gorm.Open(gorm_postgres.Open(dbURL), &gorm.Config{})
+	db, err := gorm.Open(gorm_postgres.New(gorm_postgres.Config{
+		DSN:                  dbURL,
+		PreferSimpleProtocol: true,
+	}), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
+	}
+
+	// Auto-migrate models
+	log.Println("Running database migrations...")
+	if err := db.AutoMigrate(&dto.AIModel{}, &dto.UsageLog{}); err != nil {
+		log.Fatalf("Failed to run migrations: %v", err)
 	}
 
 	// Initialize Vault client
@@ -98,6 +108,10 @@ func runServe(cmd *cobra.Command, args []string) {
 	// Initialize layers
 	modelRepo := postgres.NewModelRepository(db)
 	cryptoHelper := helper.NewCryptoHelpers(aiServiceSecret)
+
+	// Seed models
+	helper.SeedModels(db, cryptoHelper)
+
 	modelUsecase := usecases.NewModelUsecase(modelRepo, vaultClient, cryptoHelper)
 	transform := helper.NewTransform()
 	modelController := controllers.NewModelController(modelUsecase, transform)

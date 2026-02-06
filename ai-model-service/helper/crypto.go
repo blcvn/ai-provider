@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -19,8 +20,10 @@ type cryptoHelpers struct {
 }
 
 func NewCryptoHelpers(secretKey string) CryptoHelpers {
+	// Hash the secret key to ensure it's exactly 32 bytes (SHA-256)
+	hash := sha256.Sum256([]byte(secretKey))
 	return &cryptoHelpers{
-		secretKey: []byte(secretKey),
+		secretKey: hash[:],
 	}
 }
 

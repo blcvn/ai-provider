@@ -1,32 +1,73 @@
-FROM golang:1.23-alpine AS builder
-
+# Build stage
+FROM golang:1.24 as builder
 WORKDIR /app
 
-# Install build dependencies
-RUN apk add --no-cache git
+# Copy go.mod files for dependency resolution
+COPY services/pkg/go.mod ./services/pkg/
+COPY services/ai-proxy-service/go.mod services/ai-proxy-service/go.sum ./services/ai-proxy-service/
 
-# Copy go mod files
-COPY go.mod go.sum ./
-RUN go mod download
+# Download dependencies
+RUN cd services/ai-proxy-service && go mod download
 
 # Copy source code
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o ai-proxy-service ./cmd/server.go
+RUN cd services/ai-proxy-service && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags="-w -s" \
+    -o /bin/ai-proxy-service ./main.go
 
-# Final stage
+# Runtime stage
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates
+# Install runtime dependencies
+RUN apk add --no-cache ca-certificates curl tzdata
 
-WORKDIR /root/
+# Create non-root user
+RUN addgroup -g 1000 appuser && \
+    adduser -D -u 1000 -G appuser appuser
 
-# Copy the binary from builder
-COPY --from=builder /app/ai-proxy-service .
+# Create necessary directories
+RUN mkdir -p /app/config /vault/secrets && \
+    chown -R appuser:appuser /app
+
+# Copy binary from builder
+COPY --from=builder /bin/ai-proxy-service /bin/ai-proxy-service
+
+# Copy config file from builder
+COPY --from=builder /app/services/ai-proxy-service/config/config.yaml /app/config/config.yaml
+
+# Set ownership
+RUN chown appuser:appuser /bin/ai-proxy-service && \
+    chown -R appuser:appuser /app/config
+
+# Switch to non-root user
+USER appuser
+
+# Set working directory
+WORKDIR /app
+
+# Environment variables with defaults (NATIVE PORTS)
+ENV SERVICE_NAME=ai-proxy-service \
+    JAEGER_URL=localhost:4317 \
+    METRICS_PATH=/metrics \
+    GRPC_PORT=9087 \
+    HTTP_PORT=8087 \
+    CONFIG_FILE=/app/config/config.yaml \
+    SECRET_FILE=/vault/secrets/config.json
 
 # Expose ports
-EXPOSE 8087 9090
+EXPOSE 9087 8087
 
-# Run the service
-CMD ["./ai-proxy-service"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:${HTTP_PORT}/metrics || exit 1
+
+# Run the application
+CMD ["/bin/ai-proxy-service", "serve", \
+    "--service-name=${SERVICE_NAME}", \
+    "--jaeger-url=${JAEGER_URL}", \
+    "--metrics-path=${METRICS_PATH}", \
+    "--grpc-port=${GRPC_PORT}", \
+    "--http-port=${HTTP_PORT}"]

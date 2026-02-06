@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/blcvn/backend/services/pkg v0.0.0-00010101000000-000000000000
-	github.com/blcvn/kratos-proto/go/ai-model v0.0.0-00010101000000-000000000000
+	github.com/blcvn/kratos-proto/go/ai-model v1.0.0
 	github.com/google/uuid v1.6.0
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.3
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
@@ -62,8 +62,5 @@ require (
 )
 
 // Use local proto package
-replace github.com/blcvn/kratos-proto => /home/anhdt/vnpay/BA-Agentic/Agentic/protos
-
-replace github.com/blcvn/kratos-proto/go/ai-model => /home/anhdt/vnpay/BA-Agentic/Agentic/protos/go/ai-model
 
 replace github.com/blcvn/backend/services/pkg => ../pkg
