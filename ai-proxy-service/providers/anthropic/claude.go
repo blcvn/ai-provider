@@ -61,7 +61,7 @@ func (c *ClaudeProvider) Complete(ctx context.Context, req *entities.CompletionR
 	// Build options
 	callOpts := []llms.CallOption{
 		llms.WithTemperature(float64(req.Temperature)),
-		llms.WithMaxTokens(16384),
+		llms.WithMaxTokens(32000),
 	}
 
 	if len(req.StopSequences) > 0 {

@@ -3,6 +3,7 @@ package usecases
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/blcvn/backend/services/ai-proxy-service/common/errors"
 	"github.com/blcvn/backend/services/ai-proxy-service/entities"
@@ -33,7 +34,7 @@ func (u *ProxyUsecase) RegisterProvider(name string, provider entities.LLMProvid
 	u.providers[name] = provider
 }
 
-func (u *ProxyUsecase) Complete(ctx context.Context, req *entities.CompletionRequest) (*entities.CompletionResponse, errors.BaseError) {
+func (u *ProxyUsecase) Complete(c context.Context, req *entities.CompletionRequest) (*entities.CompletionResponse, errors.BaseError) {
 	// 1. Check Quota
 	// tạm thời bỏ logic check quota
 	// allowed, err := u.modelClient.CheckQuota(ctx, req.ModelID, req.MaxTokens)
@@ -43,7 +44,8 @@ func (u *ProxyUsecase) Complete(ctx context.Context, req *entities.CompletionReq
 	// if !allowed {
 	// 	return nil, errors.RateLimit("quota exceeded for this model")
 	// }
-
+	ctx, cancel := context.WithTimeout(c, 600*time.Second)
+	defer cancel()
 	// 2. Get Model Info (to know provider)
 	model, err := u.modelClient.GetModel(ctx, req.ModelID)
 	if err != nil {
