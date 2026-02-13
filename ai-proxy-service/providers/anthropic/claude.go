@@ -90,7 +90,7 @@ func (c *ClaudeProvider) Complete(ctx context.Context, req *entities.CompletionR
 	}
 	promptTokens := int32(estimateTokens(promptText))
 	completionTokens := int32(estimateTokens(text))
-
+	log.Printf("Anthropic Usage: Content %s PromptTokens=%d, CompletionTokens=%d, TotalTokens=%d", text, promptTokens, completionTokens, promptTokens+completionTokens)
 	return &entities.CompletionResponse{
 		Content:      text,
 		FinishReason: stopReason,
