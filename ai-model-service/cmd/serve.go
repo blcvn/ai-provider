@@ -19,7 +19,7 @@ import (
 	"github.com/blcvn/backend/services/ai-model-service/usecases"
 	pb "github.com/blcvn/kratos-proto/go/ai-model"
 
-	"github.com/blcvn/backend/services/pkg/mtls"
+	"github.com/blcvn/ba-shared-libs/pkg/mtls"
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/recovery"
 	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"

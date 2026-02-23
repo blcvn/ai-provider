@@ -3,7 +3,7 @@ module github.com/blcvn/backend/services/ai-model-service
 go 1.24.0
 
 require (
-	github.com/blcvn/backend/services/pkg v0.0.0-00010101000000-000000000000
+	github.com/blcvn/ba-shared-libs/pkg v0.0.0-00010101000000-000000000000
 	github.com/blcvn/kratos-proto/go/ai-model v1.0.0
 	github.com/google/uuid v1.6.0
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.3
@@ -68,4 +68,6 @@ require (
 
 // Use local proto package
 
-replace github.com/blcvn/backend/services/pkg => ../pkg
+replace github.com/blcvn/ba-shared-libs/pkg => ../../ba-shared-libs/pkg
+
+replace github.com/blcvn/ba-shared-libs/proto => ../../ba-shared-libs/proto
